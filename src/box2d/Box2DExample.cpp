@@ -155,13 +155,10 @@ b2Body *Box2DExample::createBody(Object2D &object, const Vector2 &halfSize,
   fixture.shape = &shape;
   body->CreateFixture(&fixture);
 
-#ifndef IT_IS_THE_OLD_BOX2D
   /* Why keep things simple if there's an awful and backwards-incompatible
      way, eh? https://github.com/erincatto/box2d/pull/658 */
   body->GetUserData().pointer = reinterpret_cast<std::uintptr_t>(&object);
-#else
-  body->SetUserData(&object);
-#endif
+
   object.setScaling(halfSize);
 
   return body;
