@@ -203,6 +203,8 @@ Box2DExample::Box2DExample(const Arguments &arguments)
         const_cast<char *>(font.data()), Int(font.size()),
         16.0f * framebufferSize().x() / size.x(), &fontConfig);
 
+    ImGui::GetIO().IniFilename = "bin/imgui/saved_layout.ini";
+
     imgui_context_ = ImGuiIntegration::Context{
         *ImGui::GetCurrentContext(), Vector2{windowSize()} / dpiScaling(),
         windowSize(), framebufferSize()};
