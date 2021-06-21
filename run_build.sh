@@ -1,6 +1,7 @@
 sudo rm -rf build
 mkdir build && cd build
 cmake .. \
+    -DIMGUI_DIR=/home/tasman/Coding/ImGui/imgui \
     -DCMAKE_INSTALL_PREFIX=/usr \
     -DCMAKE_EXPORT_COMPILE_COMMANDS=1
 make
