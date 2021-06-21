@@ -60,6 +60,10 @@ if(WITH_BOX2D_EXAMPLE)
     add_subdirectory(box2d)
 endif()
 
+if(WITH_CIRCLE_DROP)
+    add_subdirectory(CircleDrop)
+endif()
+
 if(WITH_BULLET_EXAMPLE)
     add_subdirectory(bullet)
 endif()
