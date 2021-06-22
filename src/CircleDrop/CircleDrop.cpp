@@ -28,25 +28,37 @@
     CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
 
+#include <Corrade/Containers/Array.h>
 #include <Corrade/Containers/GrowableArray.h>
+#include <Corrade/Containers/Tags.h>
 #include <Corrade/Utility/Arguments.h>
 #include <Magnum/GL/Buffer.h>
 #include <Magnum/GL/Context.h>
 #include <Magnum/GL/DefaultFramebuffer.h>
 #include <Magnum/GL/Mesh.h>
+#include <Magnum/GL/MeshView.h>
 #include <Magnum/GL/Renderer.h>
 #include <Magnum/ImGuiIntegration/Context.hpp>
+#include <Magnum/Magnum.h>
 #include <Magnum/Math/ConfigurationValue.h>
 #include <Magnum/Math/DualComplex.h>
 #include <Magnum/MeshTools/Compile.h>
 #include <Magnum/Platform/Sdl2Application.h>
+#include <Magnum/Primitives/Circle.h>
 #include <Magnum/Primitives/Square.h>
 #include <Magnum/SceneGraph/Camera.h>
 #include <Magnum/SceneGraph/Drawable.h>
 #include <Magnum/SceneGraph/Scene.h>
+#include <Magnum/SceneGraph/SceneGraph.h>
 #include <Magnum/SceneGraph/TranslationRotationScalingTransformation2D.h>
 #include <Magnum/Shaders/Flat.h>
 #include <Magnum/Trade/MeshData.h>
+#include <box2d/b2_body.h>
+#include <box2d/b2_circle_shape.h>
+#include <box2d/b2_collision.h>
+#include <box2d/b2_shape.h>
+
+#include <iostream>
 
 /* Box2D 2.3 (from 2014) uses mixed case, 2.4 (from 2020) uses lowercase */
 #ifdef __has_include
@@ -62,6 +74,11 @@
 #include <Box2D/Box2D.h>
 #define IT_IS_THE_OLD_BOX2D
 #endif
+
+namespace {
+enum class ShapeType { Circle, Box };
+
+} // namespace
 
 namespace Magnum {
 namespace Examples {
@@ -102,17 +119,23 @@ private:
   void box2d_mouse_press_event(MouseEvent &event);
 
   b2Body *createBody(Object2D &object, const Vector2 &size, b2BodyType type,
-                     const DualComplex &transformation, Float density = 1.0f);
+                     const DualComplex &transformation, Float density = 1.0f,
+                     const ShapeType shape_type = ShapeType::Box);
 
   GL::Mesh _mesh{NoCreate};
+  GL::Mesh _circle_mesh{NoCreate};
   GL::Buffer _instanceBuffer{NoCreate};
+  GL::Buffer _circle_instanceBuffer{NoCreate};
   Shaders::Flat2D _shader{NoCreate};
+  Shaders::Flat2D _circle_shader{NoCreate};
   Containers::Array<InstanceData> _instanceData;
+  Containers::Array<InstanceData> _circle_instanceData;
 
   Scene2D _scene;
   Object2D *_cameraObject;
   SceneGraph::Camera2D *_camera;
   SceneGraph::DrawableGroup2D _drawables;
+  SceneGraph::DrawableGroup2D _circle_drawables;
   Containers::Optional<b2World> _world;
   ImGuiIntegration::Context imgui_context_{NoCreate};
 };
@@ -135,10 +158,29 @@ private:
   Color3 _color;
 };
 
-b2Body *CircleDrop::createBody(Object2D &object, const Vector2 &halfSize,
-                                 const b2BodyType type,
-                                 const DualComplex &transformation,
-                                 const Float density) {
+class CircleDrawable : public SceneGraph::Drawable2D {
+public:
+  explicit CircleDrawable(Object2D &object,
+                          Containers::Array<InstanceData> &instanceData,
+                          const Color3 &color,
+                          SceneGraph::DrawableGroup2D &drawables)
+      : SceneGraph::Drawable2D{object, &drawables},
+        _instanceData(instanceData), _color{color} {}
+
+private:
+  void draw(const Matrix3 &transformation, SceneGraph::Camera2D &) override {
+    arrayAppend(_instanceData, Containers::InPlaceInit, transformation, _color);
+  }
+
+  Containers::Array<InstanceData> &_instanceData;
+  Color3 _color;
+};
+
+b2Body *
+CircleDrop::createBody(Object2D &object, const Vector2 &halfSize,
+                       const b2BodyType type, const DualComplex &transformation,
+                       const Float density,
+                       const ShapeType shape_type /* = ShapeType::Box*/) {
   b2BodyDef bodyDefinition;
   bodyDefinition.position.Set(transformation.translation().x(),
                               transformation.translation().y());
@@ -146,14 +188,25 @@ b2Body *CircleDrop::createBody(Object2D &object, const Vector2 &halfSize,
   bodyDefinition.type = type;
   b2Body *body = _world->CreateBody(&bodyDefinition);
 
-  b2PolygonShape shape;
-  shape.SetAsBox(halfSize.x(), halfSize.y());
+  if (shape_type == ShapeType::Box) {
+    b2FixtureDef fixture;
+    b2PolygonShape shape;
+    fixture.friction = 0.8f;
+    fixture.density = density;
+    fixture.shape = &shape;
+    shape.SetAsBox(halfSize.x(), halfSize.y());
+    body->CreateFixture(&fixture);
 
-  b2FixtureDef fixture;
-  fixture.friction = 0.8f;
-  fixture.density = density;
-  fixture.shape = &shape;
-  body->CreateFixture(&fixture);
+  } else if (shape_type == ShapeType::Circle) {
+    std::cout << "tsmith - creating circle" << std::endl;
+    b2FixtureDef fixture;
+    b2CircleShape shape;
+    fixture.friction = 0.8f;
+    fixture.density = density;
+    fixture.shape = &shape;
+    shape.m_radius = 0.5f;
+    body->CreateFixture(&fixture);
+  }
 
   /* Why keep things simple if there's an awful and backwards-incompatible
      way, eh? https://github.com/erincatto/box2d/pull/658 */
@@ -229,12 +282,23 @@ CircleDrop::CircleDrop(const Arguments &arguments)
   _shader = Shaders::Flat2D{Shaders::Flat2D::Flag::VertexColor |
                             Shaders::Flat2D::Flag::InstancedTransformation};
 
+  _circle_shader =
+      Shaders::Flat2D{Shaders::Flat2D::Flag::VertexColor |
+                      Shaders::Flat2D::Flag::InstancedTransformation};
+
   /* Box mesh with an (initially empty) instance buffer */
   _mesh = MeshTools::compile(Primitives::squareSolid());
+  _circle_mesh = MeshTools::compile(Primitives::circle2DSolid(10U, {}));
+
   _instanceBuffer = GL::Buffer{};
+  _circle_instanceBuffer = GL::Buffer{};
   _mesh.addVertexBufferInstanced(_instanceBuffer, 1, 0,
                                  Shaders::Flat2D::TransformationMatrix{},
                                  Shaders::Flat2D::Color3{});
+
+  _circle_mesh.addVertexBufferInstanced(_circle_instanceBuffer, 1, 0,
+                                        Shaders::Flat2D::TransformationMatrix{},
+                                        Shaders::Flat2D::Color3{});
 
   /* Create the ground */
   auto ground = new Object2D{&_scene};
@@ -242,20 +306,32 @@ CircleDrop::CircleDrop(const Arguments &arguments)
              DualComplex::translation(Vector2::yAxis(-8.0f)));
   new BoxDrawable{*ground, _instanceData, 0xa5c9ea_rgbf, _drawables};
 
-  /* Create a pyramid of boxes */
-  const auto pyramid_height = 30;
-  for (std::size_t row = 0; row != pyramid_height; ++row) {
-    for (std::size_t item = 0; item != pyramid_height - row; ++item) {
-      auto box = new Object2D{&_scene};
-      const DualComplex transformation =
-          globalTransformation *
-          DualComplex::translation(
-              {Float(row) * 0.6f + Float(item) * 1.2f - 8.5f,
-               Float(row) * 1.0f - 6.0f});
-      createBody(*box, {0.5f, 0.5f}, b2_dynamicBody, transformation);
-      new BoxDrawable{*box, _instanceData, 0x2f83cc_rgbf, _drawables};
-    }
-  }
+  // /* Create a pyramid of boxes */
+  // const auto pyramid_height = 30;
+  // for (std::size_t row = 0; row != pyramid_height; ++row) {
+  //   for (std::size_t item = 0; item != pyramid_height - row; ++item) {
+  //     auto box = new Object2D{&_scene};
+  //     const DualComplex transformation =
+  //         globalTransformation *
+  //         DualComplex::translation(
+  //             {Float(row) * 0.6f + Float(item) * 1.2f - 8.5f,
+  //              Float(row) * 1.0f - 6.0f});
+  //     createBody(*box, {0.5f, 0.5f}, b2_dynamicBody, transformation);
+  //     new BoxDrawable{*box, _instanceData, 0x2f83cc_rgbf, _drawables};
+  //   }
+  // }
+
+  const float radius = 2.f;
+  const Vector2 start_pos{11.f, 0.5f};
+
+  auto circle = new Object2D{&_scene};
+  const DualComplex transformation =
+      globalTransformation * DualComplex::translation({0.f, 0.f});
+
+  createBody(*circle, {0.5f, 0.5f}, b2_dynamicBody, transformation, 1.f,
+             ShapeType::Circle);
+
+  new CircleDrawable{*circle, _instanceData, 0x2f83cc_rgbf, _circle_drawables};
 
   setSwapInterval(1);
 #if !defined(CORRADE_TARGET_EMSCRIPTEN) && !defined(CORRADE_TARGET_ANDROID)
@@ -328,12 +404,28 @@ void CircleDrop::draw_event_box2d() {
   /* Populate instance data with transformations and colors */
   arrayResize(_instanceData, 0);
   _camera->draw(_drawables);
+  _camera->draw(_circle_drawables);
 
   /* Upload instance data to the GPU and draw everything in a single call */
   _instanceBuffer.setData(_instanceData, GL::BufferUsage::DynamicDraw);
+  _circle_instanceBuffer.setData(_instanceData, GL::BufferUsage::DynamicDraw);
+
   _mesh.setInstanceCount(_instanceData.size());
+  _circle_mesh.setInstanceCount(_instanceData.size());
+
+  GL::MeshView mesh_view{_mesh};
+  mesh_view.setCount(_instanceData.size());
+  GL::MeshView circle_mesh_view{_circle_mesh};
+  circle_mesh_view.setCount(_instanceData.size());
+
+  auto meshes = Containers::array<GL::MeshView>(
+      {mesh_view, circle_mesh_view});
+
   _shader.setTransformationProjectionMatrix(_camera->projectionMatrix())
-      .draw(_mesh);
+      .draw(mesh_view);
+
+  _circle_shader.setTransformationProjectionMatrix(_camera->projectionMatrix())
+      .draw(_circle_mesh);
 }
 
 void CircleDrop::draw_event_imgui() {
