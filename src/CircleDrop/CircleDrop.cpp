@@ -124,18 +124,17 @@ private:
 
   GL::Mesh _mesh{NoCreate};
   GL::Mesh _circle_mesh{NoCreate};
-  GL::Buffer _instanceBuffer{NoCreate};
-  GL::Buffer _circle_instanceBuffer{NoCreate};
+  GL::Buffer _boxInstanceBuffer{NoCreate};
+  GL::Buffer _circleInstanceBuffer{NoCreate};
+
   Shaders::Flat2D _shader{NoCreate};
-  Shaders::Flat2D _circle_shader{NoCreate};
-  Containers::Array<InstanceData> _instanceData;
-  Containers::Array<InstanceData> _circle_instanceData;
+  Containers::Array<InstanceData> _boxInstanceData;
+  Containers::Array<InstanceData> _circleInstanceData;
 
   Scene2D _scene;
   Object2D *_cameraObject;
   SceneGraph::Camera2D *_camera;
   SceneGraph::DrawableGroup2D _drawables;
-  SceneGraph::DrawableGroup2D _circle_drawables;
   Containers::Optional<b2World> _world;
   ImGuiIntegration::Context imgui_context_{NoCreate};
 };
@@ -282,21 +281,17 @@ CircleDrop::CircleDrop(const Arguments &arguments)
   _shader = Shaders::Flat2D{Shaders::Flat2D::Flag::VertexColor |
                             Shaders::Flat2D::Flag::InstancedTransformation};
 
-  _circle_shader =
-      Shaders::Flat2D{Shaders::Flat2D::Flag::VertexColor |
-                      Shaders::Flat2D::Flag::InstancedTransformation};
-
   /* Box mesh with an (initially empty) instance buffer */
   _mesh = MeshTools::compile(Primitives::squareSolid());
-  _circle_mesh = MeshTools::compile(Primitives::circle2DSolid(10U, {}));
+  _circle_mesh = MeshTools::compile(Primitives::circle2DSolid(100U, {}));
 
-  _instanceBuffer = GL::Buffer{};
-  _circle_instanceBuffer = GL::Buffer{};
-  _mesh.addVertexBufferInstanced(_instanceBuffer, 1, 0,
+  _boxInstanceBuffer = GL::Buffer{};
+  _mesh.addVertexBufferInstanced(_boxInstanceBuffer, 1, 0,
                                  Shaders::Flat2D::TransformationMatrix{},
                                  Shaders::Flat2D::Color3{});
 
-  _circle_mesh.addVertexBufferInstanced(_circle_instanceBuffer, 1, 0,
+  _circleInstanceBuffer = GL::Buffer{};
+  _circle_mesh.addVertexBufferInstanced(_circleInstanceBuffer, 1, 0,
                                         Shaders::Flat2D::TransformationMatrix{},
                                         Shaders::Flat2D::Color3{});
 
@@ -304,7 +299,7 @@ CircleDrop::CircleDrop(const Arguments &arguments)
   auto ground = new Object2D{&_scene};
   createBody(*ground, {11.0f, 0.5f}, b2_staticBody,
              DualComplex::translation(Vector2::yAxis(-8.0f)));
-  new BoxDrawable{*ground, _instanceData, 0xa5c9ea_rgbf, _drawables};
+  new BoxDrawable{*ground, _boxInstanceData, 0xa5c9ea_rgbf, _drawables};
 
   // /* Create a pyramid of boxes */
   // const auto pyramid_height = 30;
@@ -317,7 +312,7 @@ CircleDrop::CircleDrop(const Arguments &arguments)
   //             {Float(row) * 0.6f + Float(item) * 1.2f - 8.5f,
   //              Float(row) * 1.0f - 6.0f});
   //     createBody(*box, {0.5f, 0.5f}, b2_dynamicBody, transformation);
-  //     new BoxDrawable{*box, _instanceData, 0x2f83cc_rgbf, _drawables};
+  //     new BoxDrawable{*box, _boxInstanceData, 0x2f83cc_rgbf, _drawables};
   //   }
   // }
 
@@ -331,7 +326,7 @@ CircleDrop::CircleDrop(const Arguments &arguments)
   createBody(*circle, {0.5f, 0.5f}, b2_dynamicBody, transformation, 1.f,
              ShapeType::Circle);
 
-  new CircleDrawable{*circle, _instanceData, 0x2f83cc_rgbf, _circle_drawables};
+  new CircleDrawable{*circle, _circleInstanceData, 0x2f83cc_rgbf, _drawables};
 
   setSwapInterval(1);
 #if !defined(CORRADE_TARGET_EMSCRIPTEN) && !defined(CORRADE_TARGET_ANDROID)
@@ -358,14 +353,14 @@ void CircleDrop::box2d_mouse_press_event(MouseEvent &event) {
   auto destroyer = new Object2D{&_scene};
   createBody(*destroyer, {0.5f, 0.5f}, b2_dynamicBody,
              DualComplex::translation(position), 2.0f);
-  new BoxDrawable{*destroyer, _instanceData, 0xffff66_rgbf, _drawables};
+  new CircleDrawable{*destroyer, _circleInstanceData, 0xffff66_rgbf, _drawables};
 
   auto offset = DualComplex::translation({0.0f, -2.0f});
   auto position_2 = DualComplex::translation(position) * offset;
 
   auto destroyer2 = new Object2D{&_scene};
   createBody(*destroyer2, {1.5f, 0.5f}, b2_dynamicBody, position_2, 2.0f);
-  new BoxDrawable{*destroyer2, _instanceData, 0xff0000_rgbf, _drawables};
+  new BoxDrawable{*destroyer2, _boxInstanceData, 0xff0000_rgbf, _drawables};
 
   event.setAccepted();
 }
@@ -402,30 +397,20 @@ void CircleDrop::draw_event_box2d() {
   }
 
   /* Populate instance data with transformations and colors */
-  arrayResize(_instanceData, 0);
+  arrayResize(_boxInstanceData, 0);
+  arrayResize(_circleInstanceData, 0);
   _camera->draw(_drawables);
-  _camera->draw(_circle_drawables);
 
   /* Upload instance data to the GPU and draw everything in a single call */
-  _instanceBuffer.setData(_instanceData, GL::BufferUsage::DynamicDraw);
-  _circle_instanceBuffer.setData(_instanceData, GL::BufferUsage::DynamicDraw);
+  _boxInstanceBuffer.setData(_boxInstanceData, GL::BufferUsage::DynamicDraw);
+  _mesh.setInstanceCount(_boxInstanceData.size());
+  _shader.setTransformationProjectionMatrix(_camera->projectionMatrix());
+  _shader.draw(_mesh);
 
-  _mesh.setInstanceCount(_instanceData.size());
-  _circle_mesh.setInstanceCount(_instanceData.size());
-
-  GL::MeshView mesh_view{_mesh};
-  mesh_view.setCount(_instanceData.size());
-  GL::MeshView circle_mesh_view{_circle_mesh};
-  circle_mesh_view.setCount(_instanceData.size());
-
-  auto meshes = Containers::array<GL::MeshView>(
-      {mesh_view, circle_mesh_view});
-
-  _shader.setTransformationProjectionMatrix(_camera->projectionMatrix())
-      .draw(mesh_view);
-
-  _circle_shader.setTransformationProjectionMatrix(_camera->projectionMatrix())
-      .draw(_circle_mesh);
+  _circleInstanceBuffer.setData(_circleInstanceData,
+                                GL::BufferUsage::DynamicDraw);
+  _circle_mesh.setInstanceCount(_circleInstanceData.size());
+  _shader.draw(_circle_mesh);
 }
 
 void CircleDrop::draw_event_imgui() {
