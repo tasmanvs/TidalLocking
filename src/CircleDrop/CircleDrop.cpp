@@ -344,6 +344,12 @@ void CircleDrop::draw_event_box2d() {
   /* Step the world and update all object positions */
   _world->Step(1.0f / 60.0f, 6, 2);
   for (b2Body *body = _world->GetBodyList(); body; body = body->GetNext()) {
+
+    if (body->GetPosition().y < -50)
+    {
+      _world->DestroyBody(body);
+      continue;
+    }
     /* Why keep things simple if there's an awful backwards-incompatible
        way, eh? https://github.com/erincatto/box2d/pull/658 */
     (*reinterpret_cast<Object2D *>(body->GetUserData().pointer))
