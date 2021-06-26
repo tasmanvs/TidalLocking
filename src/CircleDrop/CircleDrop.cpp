@@ -1,33 +1,3 @@
-/*
-    This file is part of Magnum.
-
-    Original authors — credit is appreciated but not required:
-
-        2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021
-             — Vladimír Vondruš <mosra@centrum.cz>
-        2018 — Michal Mikula <miso.mikula@gmail.com>
-
-    This is free and unencumbered software released into the public domain.
-
-    Anyone is free to copy, modify, publish, use, compile, sell, or distribute
-    this software, either in source code form or as a compiled binary, for any
-    purpose, commercial or non-commercial, and by any means.
-
-    In jurisdictions that recognize copyright laws, the author or authors of
-    this software dedicate any and all copyright interest in the software to
-    the public domain. We make this dedication for the benefit of the public
-    at large and to the detriment of our heirs and successors. We intend this
-    dedication to be an overt act of relinquishment in perpetuity of all
-    present and future rights to this software under copyright law.
-
-    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-    THE AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
-    IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
-    CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-*/
-
 #include <Corrade/Containers/Array.h>
 #include <Corrade/Containers/GrowableArray.h>
 #include <Corrade/Containers/Tags.h>
@@ -53,27 +23,16 @@
 #include <Magnum/SceneGraph/TranslationRotationScalingTransformation2D.h>
 #include <Magnum/Shaders/Flat.h>
 #include <Magnum/Trade/MeshData.h>
+#include <SDL_video.h>
 #include <box2d/b2_body.h>
 #include <box2d/b2_circle_shape.h>
 #include <box2d/b2_collision.h>
 #include <box2d/b2_shape.h>
 
+#include <imgui.h>
 #include <iostream>
 
-/* Box2D 2.3 (from 2014) uses mixed case, 2.4 (from 2020) uses lowercase */
-#ifdef __has_include
-#if __has_include(<box2d/box2d.h>)
 #include <box2d/box2d.h>
-#else
-#include <Box2D/Box2D.h>
-#define IT_IS_THE_OLD_BOX2D
-#endif
-/* If the compiler doesn't have __has_include, assume it's extremely old, and
-   thus an extremely old Box2D is more likely as well */
-#else
-#include <Box2D/Box2D.h>
-#define IT_IS_THE_OLD_BOX2D
-#endif
 
 namespace {
 enum class ShapeType { Circle, Box };
@@ -100,6 +59,7 @@ struct InstanceData {
 class CircleDrop : public Platform::Application {
 public:
   explicit CircleDrop(const Arguments &arguments);
+  void create_pyramid();
 
 private:
   void drawEvent() override;
@@ -137,6 +97,9 @@ private:
   SceneGraph::DrawableGroup2D _drawables;
   Containers::Optional<b2World> _world;
   ImGuiIntegration::Context imgui_context_{NoCreate};
+
+  DualComplex global_transform_;
+  float radius_{1.f};
 };
 
 class BoxDrawable : public SceneGraph::Drawable2D {
@@ -203,7 +166,7 @@ CircleDrop::createBody(Object2D &object, const Vector2 &halfSize,
     fixture.friction = 0.8f;
     fixture.density = density;
     fixture.shape = &shape;
-    shape.m_radius = 0.5f;
+    shape.m_radius = radius_;
     body->CreateFixture(&fixture);
   }
 
@@ -226,15 +189,16 @@ CircleDrop::CircleDrop(const Arguments &arguments)
       .addSkippedPrefix("magnum", "engine-specific options")
       .parse(arguments.argc, arguments.argv);
 
-  const DualComplex globalTransformation =
-      args.value<DualComplex>("transformation").normalized();
+  global_transform_ = args.value<DualComplex>("transformation").normalized();
 
   /* Try 8x MSAA, fall back to zero samples if not possible. Enable only 2x
      MSAA if we have enough DPI. */
   {
     const Vector2 dpiScaling = this->dpiScaling({});
     Configuration conf;
-    conf.setTitle("Magnum Box2D Example").setSize(conf.size(), dpiScaling);
+    conf.setTitle("Circle Drop").setSize(conf.size(), dpiScaling);
+
+    conf.addWindowFlags(Configuration::WindowFlag::Resizable);
     GLConfiguration glConf;
     glConf.setSampleCount(dpiScaling.max() < 2.0f ? 8 : 2);
     if (!tryCreate(conf, glConf))
@@ -283,7 +247,7 @@ CircleDrop::CircleDrop(const Arguments &arguments)
 
   /* Box mesh with an (initially empty) instance buffer */
   _mesh = MeshTools::compile(Primitives::squareSolid());
-  _circle_mesh = MeshTools::compile(Primitives::circle2DSolid(100U, {}));
+  _circle_mesh = MeshTools::compile(Primitives::circle2DSolid(10U, {}));
 
   _boxInstanceBuffer = GL::Buffer{};
   _mesh.addVertexBufferInstanced(_boxInstanceBuffer, 1, 0,
@@ -301,37 +265,31 @@ CircleDrop::CircleDrop(const Arguments &arguments)
              DualComplex::translation(Vector2::yAxis(-8.0f)));
   new BoxDrawable{*ground, _boxInstanceData, 0xa5c9ea_rgbf, _drawables};
 
-  // /* Create a pyramid of boxes */
-  // const auto pyramid_height = 30;
-  // for (std::size_t row = 0; row != pyramid_height; ++row) {
-  //   for (std::size_t item = 0; item != pyramid_height - row; ++item) {
-  //     auto box = new Object2D{&_scene};
-  //     const DualComplex transformation =
-  //         globalTransformation *
-  //         DualComplex::translation(
-  //             {Float(row) * 0.6f + Float(item) * 1.2f - 8.5f,
-  //              Float(row) * 1.0f - 6.0f});
-  //     createBody(*box, {0.5f, 0.5f}, b2_dynamicBody, transformation);
-  //     new BoxDrawable{*box, _boxInstanceData, 0x2f83cc_rgbf, _drawables};
-  //   }
-  // }
-
-  const float radius = 2.f;
-  const Vector2 start_pos{11.f, 0.5f};
-
-  auto circle = new Object2D{&_scene};
-  const DualComplex transformation =
-      globalTransformation * DualComplex::translation({0.f, 0.f});
-
-  createBody(*circle, {0.5f, 0.5f}, b2_dynamicBody, transformation, 1.f,
-             ShapeType::Circle);
-
-  new CircleDrawable{*circle, _circleInstanceData, 0x2f83cc_rgbf, _drawables};
+  create_pyramid();
 
   setSwapInterval(1);
 #if !defined(CORRADE_TARGET_EMSCRIPTEN) && !defined(CORRADE_TARGET_ANDROID)
   setMinimalLoopPeriod(16);
 #endif
+}
+
+void CircleDrop::create_pyramid() {
+  /* Create a pyramid of circles */
+  const auto pyramid_height = 50;
+  for (std::size_t row = 0; row != pyramid_height; ++row) {
+    for (std::size_t item = 0; item != pyramid_height - row; ++item) {
+      auto circle = new Object2D{&_scene};
+      const DualComplex transformation =
+          global_transform_ *
+          DualComplex::translation(
+              {Float(row) * radius_ + 0.1f + Float(item) * 1.2f - 8.5f,
+               Float(row) * 1.0f - 6.0f});
+      createBody(*circle, {radius_, radius_}, b2_dynamicBody, transformation,
+                 1.f, ShapeType::Circle);
+      new CircleDrawable{*circle, _circleInstanceData, 0x2f83aa_rgbf,
+                         _drawables};
+    }
+  }
 }
 
 // Working on getting imgui events in. Need to do some find and replace, We
@@ -351,9 +309,10 @@ void CircleDrop::box2d_mouse_press_event(MouseEvent &event) {
       (Vector2{event.position()} / Vector2{windowSize()} - Vector2{0.5f});
 
   auto destroyer = new Object2D{&_scene};
-  createBody(*destroyer, {0.5f, 0.5f}, b2_dynamicBody,
-             DualComplex::translation(position), 2.0f);
-  new CircleDrawable{*destroyer, _circleInstanceData, 0xffff66_rgbf, _drawables};
+  createBody(*destroyer, {radius_, radius_}, b2_dynamicBody,
+             DualComplex::translation(position), 1.f, ShapeType::Circle);
+  new CircleDrawable{*destroyer, _circleInstanceData, 0xffff66_rgbf,
+                     _drawables};
 
   auto offset = DualComplex::translation({0.0f, -2.0f});
   auto position_2 = DualComplex::translation(position) * offset;
@@ -385,13 +344,10 @@ void CircleDrop::draw_event_box2d() {
   /* Step the world and update all object positions */
   _world->Step(1.0f / 60.0f, 6, 2);
   for (b2Body *body = _world->GetBodyList(); body; body = body->GetNext()) {
-#ifndef IT_IS_THE_OLD_BOX2D
     /* Why keep things simple if there's an awful backwards-incompatible
        way, eh? https://github.com/erincatto/box2d/pull/658 */
     (*reinterpret_cast<Object2D *>(body->GetUserData().pointer))
-#else
-    (*static_cast<Object2D *>(body->GetUserData()))
-#endif
+
         .setTranslation({body->GetPosition().x, body->GetPosition().y})
         .setRotation(Complex::rotation(Rad(body->GetAngle())));
   }
@@ -422,8 +378,11 @@ void CircleDrop::draw_event_imgui() {
   else if (!ImGui::GetIO().WantTextInput && isTextInputActive())
     stopTextInput();
 
-  // ImGui::Text("Hello, world!");
-  ImGui::ShowDemoWindow();
+  if (ImGui::Button("Create Pyramid")) {
+    create_pyramid();
+  }
+
+  ImGui::InputFloat("Radius", &radius_);
 
   GL::Renderer::enable(GL::Renderer::Feature::Blending);
   GL::Renderer::disable(GL::Renderer::Feature::FaceCulling);
@@ -449,15 +408,16 @@ void CircleDrop::drawEvent() {
 }
 
 void CircleDrop::viewportEvent(ViewportEvent &event) {
+
   /* Resize the main framebuffer */
   GL::defaultFramebuffer.setViewport({{}, event.framebufferSize()});
+
+  /* Recompute the camera's projection matrix */
+  _camera->setViewport(event.framebufferSize());
 
   /* Relayout ImGui */
   imgui_context_.relayout(Vector2{event.windowSize()} / event.dpiScaling(),
                           event.windowSize(), event.framebufferSize());
-
-  /* Recompute the camera's projection matrix */
-  _camera->setViewport(event.framebufferSize());
 }
 
 void CircleDrop::keyPressEvent(KeyEvent &event) {
