@@ -100,6 +100,7 @@ private:
 
   DualComplex global_transform_;
   float radius_{1.f};
+  int height_{30};
 };
 
 class BoxDrawable : public SceneGraph::Drawable2D {
@@ -275,7 +276,7 @@ CircleDrop::CircleDrop(const Arguments &arguments)
 
 void CircleDrop::create_pyramid() {
   /* Create a pyramid of circles */
-  const auto pyramid_height = 50;
+  const auto pyramid_height = static_cast<size_t>(height_);
   for (std::size_t row = 0; row != pyramid_height; ++row) {
     for (std::size_t item = 0; item != pyramid_height - row; ++item) {
       auto circle = new Object2D{&_scene};
@@ -345,8 +346,12 @@ void CircleDrop::draw_event_box2d() {
   _world->Step(1.0f / 60.0f, 6, 2);
   for (b2Body *body = _world->GetBodyList(); body; body = body->GetNext()) {
 
-    if (body->GetPosition().y < -50)
-    {
+    if (body->GetPosition().y < -50) {
+      // Clearing the features means that they don't get drawn. Otherwise the
+      // objects stay stationary.
+      (*reinterpret_cast<Object2D *>(body->GetUserData().pointer))
+          .features()
+          .clear();
       _world->DestroyBody(body);
       continue;
     }
@@ -388,7 +393,8 @@ void CircleDrop::draw_event_imgui() {
     create_pyramid();
   }
 
-  ImGui::InputFloat("Radius", &radius_);
+  ImGui::SliderFloat("Circle Radius", &radius_, 0.f, 10.f);
+  ImGui::SliderInt("Pyramid Height", &height_, 1, 100);
 
   GL::Renderer::enable(GL::Renderer::Feature::Blending);
   GL::Renderer::disable(GL::Renderer::Feature::FaceCulling);
