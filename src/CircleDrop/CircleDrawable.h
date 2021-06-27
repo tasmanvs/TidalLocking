@@ -17,6 +17,7 @@
 
 #include <SDL_video.h>
 
+#include "InstanceData.h"
 #include <Magnum/GL/Buffer.h>
 #include <Magnum/GL/Context.h>
 #include <Magnum/GL/DefaultFramebuffer.h>
@@ -37,25 +38,25 @@
 #include <Magnum/SceneGraph/TranslationRotationScalingTransformation2D.h>
 #include <Magnum/Trade/MeshData.h>
 
-#include "InstanceData.h"
-
-
 namespace Magnum {
 namespace Examples {
+
+typedef SceneGraph::Object<
+    SceneGraph::TranslationRotationScalingTransformation2D>
+    Object2D;
+typedef SceneGraph::Scene<
+    SceneGraph::TranslationRotationScalingTransformation2D>
+    Scene2D;
 
 class CircleDrawable : public SceneGraph::Drawable2D {
 public:
   explicit CircleDrawable(Object2D &object,
                           Containers::Array<InstanceData> &instanceData,
                           const Color3 &color,
-                          SceneGraph::DrawableGroup2D &drawables)
-      : SceneGraph::Drawable2D{object, &drawables},
-        _instanceData(instanceData), _color{color} {}
+                          SceneGraph::DrawableGroup2D &drawables);
 
 private:
-  void draw(const Matrix3 &transformation, SceneGraph::Camera2D &) override {
-    arrayAppend(_instanceData, Containers::InPlaceInit, transformation, _color);
-  }
+  void draw(const Matrix3 &transformation, SceneGraph::Camera2D &) override;
 
   Containers::Array<InstanceData> &_instanceData;
   Color3 _color;

@@ -55,6 +55,7 @@ corrade_add_resource(MagnumBox2D_RESOURCES resources.conf)
 add_executable(CircleDrop WIN32
     CircleDrop.cpp
     BoxDrawable.cpp
+    CircleDrawable.cpp
     ${MagnumBox2D_RESOURCES})
 
 target_link_libraries(CircleDrop PRIVATE
