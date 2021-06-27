@@ -1,143 +1,14 @@
-#include <Corrade/Containers/Array.h>
-#include <Corrade/Containers/GrowableArray.h>
-#include <Corrade/Containers/Tags.h>
-#include <Corrade/Utility/Arguments.h>
-#include <Magnum/GL/Buffer.h>
-#include <Magnum/GL/Context.h>
-#include <Magnum/GL/DefaultFramebuffer.h>
-#include <Magnum/GL/Mesh.h>
-#include <Magnum/GL/MeshView.h>
-#include <Magnum/GL/Renderer.h>
-#include <Magnum/ImGuiIntegration/Context.hpp>
-#include <Magnum/Magnum.h>
-#include <Magnum/Math/ConfigurationValue.h>
-#include <Magnum/Math/DualComplex.h>
-#include <Magnum/MeshTools/Compile.h>
-#include <Magnum/Platform/Sdl2Application.h>
-#include <Magnum/Primitives/Circle.h>
-#include <Magnum/Primitives/Square.h>
-#include <Magnum/SceneGraph/Camera.h>
-#include <Magnum/SceneGraph/Drawable.h>
-#include <Magnum/SceneGraph/Scene.h>
-#include <Magnum/SceneGraph/SceneGraph.h>
-#include <Magnum/SceneGraph/TranslationRotationScalingTransformation2D.h>
-#include <Magnum/Shaders/Flat.h>
-#include <Magnum/Trade/MeshData.h>
-#include <SDL_video.h>
-#include <box2d/b2_body.h>
-#include <box2d/b2_circle_shape.h>
-#include <box2d/b2_collision.h>
-#include <box2d/b2_shape.h>
+
 
 #include <imgui.h>
 #include <iostream>
 
-#include <box2d/box2d.h>
-
-namespace {
-enum class ShapeType { Circle, Box };
-
-} // namespace
+#include "CircleDrop.h"
+#include "CircleDrawable.h"
+#include "BoxDrawable.h"
 
 namespace Magnum {
 namespace Examples {
-
-typedef SceneGraph::Object<
-    SceneGraph::TranslationRotationScalingTransformation2D>
-    Object2D;
-typedef SceneGraph::Scene<
-    SceneGraph::TranslationRotationScalingTransformation2D>
-    Scene2D;
-
-using namespace Math::Literals;
-
-struct InstanceData {
-  Matrix3 transformation;
-  Color3 color;
-};
-
-class CircleDrop : public Platform::Application {
-public:
-  explicit CircleDrop(const Arguments &arguments);
-  void create_pyramid();
-
-private:
-  void drawEvent() override;
-  void draw_event_box2d();
-  void draw_event_imgui();
-
-  void mousePressEvent(MouseEvent &event) override;
-  void viewportEvent(ViewportEvent &event) override;
-  void keyPressEvent(KeyEvent &event) override;
-  void keyReleaseEvent(KeyEvent &event) override;
-  void mouseReleaseEvent(MouseEvent &event) override;
-  void mouseMoveEvent(MouseMoveEvent &event) override;
-  void mouseScrollEvent(MouseScrollEvent &event) override;
-  void textInputEvent(TextInputEvent &event) override;
-
-  void imgui_mouse_press_event(MouseEvent &event);
-  void box2d_mouse_press_event(MouseEvent &event);
-
-  b2Body *createBody(Object2D &object, const Vector2 &size, b2BodyType type,
-                     const DualComplex &transformation, Float density = 1.0f,
-                     const ShapeType shape_type = ShapeType::Box);
-
-  GL::Mesh _mesh{NoCreate};
-  GL::Mesh _circle_mesh{NoCreate};
-  GL::Buffer _boxInstanceBuffer{NoCreate};
-  GL::Buffer _circleInstanceBuffer{NoCreate};
-
-  Shaders::Flat2D _shader{NoCreate};
-  Containers::Array<InstanceData> _boxInstanceData;
-  Containers::Array<InstanceData> _circleInstanceData;
-
-  Scene2D _scene;
-  Object2D *_cameraObject;
-  SceneGraph::Camera2D *_camera;
-  SceneGraph::DrawableGroup2D _drawables;
-  Containers::Optional<b2World> _world;
-  ImGuiIntegration::Context imgui_context_{NoCreate};
-
-  DualComplex global_transform_;
-  float radius_{1.f};
-  int height_{30};
-};
-
-class BoxDrawable : public SceneGraph::Drawable2D {
-public:
-  explicit BoxDrawable(Object2D &object,
-                       Containers::Array<InstanceData> &instanceData,
-                       const Color3 &color,
-                       SceneGraph::DrawableGroup2D &drawables)
-      : SceneGraph::Drawable2D{object, &drawables},
-        _instanceData(instanceData), _color{color} {}
-
-private:
-  void draw(const Matrix3 &transformation, SceneGraph::Camera2D &) override {
-    arrayAppend(_instanceData, Containers::InPlaceInit, transformation, _color);
-  }
-
-  Containers::Array<InstanceData> &_instanceData;
-  Color3 _color;
-};
-
-class CircleDrawable : public SceneGraph::Drawable2D {
-public:
-  explicit CircleDrawable(Object2D &object,
-                          Containers::Array<InstanceData> &instanceData,
-                          const Color3 &color,
-                          SceneGraph::DrawableGroup2D &drawables)
-      : SceneGraph::Drawable2D{object, &drawables},
-        _instanceData(instanceData), _color{color} {}
-
-private:
-  void draw(const Matrix3 &transformation, SceneGraph::Camera2D &) override {
-    arrayAppend(_instanceData, Containers::InPlaceInit, transformation, _color);
-  }
-
-  Containers::Array<InstanceData> &_instanceData;
-  Color3 _color;
-};
 
 b2Body *
 CircleDrop::createBody(Object2D &object, const Vector2 &halfSize,
@@ -205,32 +76,6 @@ CircleDrop::CircleDrop(const Arguments &arguments)
     if (!tryCreate(conf, glConf))
       create(conf, glConf.setSampleCount(0));
   }
-  /* Setup ImGui, load a better font */
-  {
-    ImGui::CreateContext();
-    ImGui::StyleColorsDark();
-
-    ImFontConfig fontConfig;
-    fontConfig.FontDataOwnedByAtlas = false;
-    const Vector2 size = Vector2{windowSize()} / dpiScaling();
-    Utility::Resource rs{"data"};
-    Containers::ArrayView<const char> font =
-        rs.getRaw("SourceSansPro-Regular.ttf");
-    ImGui::GetIO().Fonts->AddFontFromMemoryTTF(
-        const_cast<char *>(font.data()), Int(font.size()),
-        16.0f * framebufferSize().x() / size.x(), &fontConfig);
-
-    ImGui::GetIO().IniFilename = "bin/imgui/saved_layout.ini";
-
-    imgui_context_ = ImGuiIntegration::Context{
-        *ImGui::GetCurrentContext(), Vector2{windowSize()} / dpiScaling(),
-        windowSize(), framebufferSize()};
-
-    /* Setup proper blending to be used by ImGui */
-    GL::Renderer::setBlendFunction(
-        GL::Renderer::BlendFunction::SourceAlpha,
-        GL::Renderer::BlendFunction::OneMinusSourceAlpha);
-  }
 
   /* Configure camera */
   _cameraObject = new Object2D{&_scene};
@@ -269,9 +114,9 @@ CircleDrop::CircleDrop(const Arguments &arguments)
   create_pyramid();
 
   setSwapInterval(1);
-#if !defined(CORRADE_TARGET_EMSCRIPTEN) && !defined(CORRADE_TARGET_ANDROID)
   setMinimalLoopPeriod(16);
-#endif
+
+  init_imgui();
 }
 
 void CircleDrop::create_pyramid() {
@@ -293,8 +138,6 @@ void CircleDrop::create_pyramid() {
   }
 }
 
-// Working on getting imgui events in. Need to do some find and replace, We
-// currently have 2x mousePressEvents.
 void CircleDrop::box2d_mouse_press_event(MouseEvent &event) {
   if (event.isAccepted()) {
     return;
@@ -477,6 +320,35 @@ void CircleDrop::mouseScrollEvent(MouseScrollEvent &event) {
 void CircleDrop::textInputEvent(TextInputEvent &event) {
   if (imgui_context_.handleTextInputEvent(event))
     event.setAccepted(true);
+}
+
+void CircleDrop::init_imgui() {
+  /* Setup ImGui, load a better font */
+  {
+    ImGui::CreateContext();
+    ImGui::StyleColorsDark();
+
+    ImFontConfig fontConfig;
+    fontConfig.FontDataOwnedByAtlas = false;
+    const Vector2 size = Vector2{windowSize()} / dpiScaling();
+    Utility::Resource rs{"data"};
+    Containers::ArrayView<const char> font =
+        rs.getRaw("SourceSansPro-Regular.ttf");
+    ImGui::GetIO().Fonts->AddFontFromMemoryTTF(
+        const_cast<char *>(font.data()), Int(font.size()),
+        16.0f * framebufferSize().x() / size.x(), &fontConfig);
+
+    ImGui::GetIO().IniFilename = "bin/imgui/saved_layout.ini";
+
+    imgui_context_ = ImGuiIntegration::Context{
+        *ImGui::GetCurrentContext(), Vector2{windowSize()} / dpiScaling(),
+        windowSize(), framebufferSize()};
+
+    /* Setup proper blending to be used by ImGui */
+    GL::Renderer::setBlendFunction(
+        GL::Renderer::BlendFunction::SourceAlpha,
+        GL::Renderer::BlendFunction::OneMinusSourceAlpha);
+  }
 }
 
 } // namespace Examples

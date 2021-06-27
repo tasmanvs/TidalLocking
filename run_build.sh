@@ -1,4 +1,4 @@
-sudo rm -rf build
+rm -rf build
 mkdir build && cd build
 cmake .. \
     -DIMGUI_DIR=/home/tasman/Coding/ImGui/imgui \
@@ -6,7 +6,7 @@ cmake .. \
     -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
     # -DCMAKE_BUILD_TYPE=Debug # Uncomment this for debug build
 make
-sudo make install # sudo may be needed
+make install # sudo may be needed
 cd ..
 
 
