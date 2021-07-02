@@ -32,7 +32,6 @@ CircleDrop::createBody(Object2D &object, const Vector2 &halfSize,
     body->CreateFixture(&fixture);
 
   } else if (shape_type == ShapeType::Circle) {
-    std::cout << "tsmith - creating circle" << std::endl;
     b2FixtureDef fixture;
     b2CircleShape shape;
     fixture.friction = 0.8f;
