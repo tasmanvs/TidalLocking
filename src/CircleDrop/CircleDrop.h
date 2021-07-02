@@ -37,7 +37,6 @@
 #include <Magnum/Trade/MeshData.h>
 #include "InstanceData.h"
 
-
 namespace Magnum {
 namespace Examples {
 
