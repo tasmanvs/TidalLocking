@@ -57,6 +57,10 @@ public:
   void create_pyramid();
 
 private:
+  void init_shaders();
+  void clear_all();
+  void create_ground();
+
   void drawEvent() override;
   void draw_event_box2d();
   void draw_event_imgui();
@@ -95,9 +99,9 @@ private:
   Containers::Optional<b2World> _world;
   ImGuiIntegration::Context imgui_context_{NoCreate};
 
-  DualComplex global_transform_;
   float radius_{1.f};
   int height_{30};
+  int num_edges_in_circle_{50};
 };
 
 

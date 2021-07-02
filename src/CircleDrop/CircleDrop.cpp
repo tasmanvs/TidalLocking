@@ -3,9 +3,9 @@
 #include <imgui.h>
 #include <iostream>
 
-#include "CircleDrop.h"
-#include "CircleDrawable.h"
 #include "BoxDrawable.h"
+#include "CircleDrawable.h"
+#include "CircleDrop.h"
 
 namespace Magnum {
 namespace Examples {
@@ -52,16 +52,6 @@ CircleDrop::createBody(Object2D &object, const Vector2 &halfSize,
 
 CircleDrop::CircleDrop(const Arguments &arguments)
     : Platform::Application{arguments, NoCreate} {
-
-  /* Make it possible for the user to have some fun */
-  Utility::Arguments args;
-  args.addOption("transformation", "1 0 0 0")
-      .setHelp("transformation", "initial pyramid transformation")
-      .addSkippedPrefix("magnum", "engine-specific options")
-      .parse(arguments.argc, arguments.argv);
-
-  global_transform_ = args.value<DualComplex>("transformation").normalized();
-
   /* Try 8x MSAA, fall back to zero samples if not possible. Enable only 2x
      MSAA if we have enough DPI. */
   {
@@ -86,13 +76,27 @@ CircleDrop::CircleDrop(const Arguments &arguments)
   /* Create the Box2D world with the usual gravity vector */
   _world.emplace(b2Vec2{0.0f, -9.81f});
 
+  init_shaders();
+
+  create_ground();
+
+  create_pyramid();
+
+  setSwapInterval(1);
+  setMinimalLoopPeriod(16);
+
+  init_imgui();
+}
+
+void CircleDrop::init_shaders() {
   /* Create an instanced shader */
   _shader = Shaders::Flat2D{Shaders::Flat2D::Flag::VertexColor |
                             Shaders::Flat2D::Flag::InstancedTransformation};
 
   /* Box mesh with an (initially empty) instance buffer */
   _mesh = MeshTools::compile(Primitives::squareSolid());
-  _circle_mesh = MeshTools::compile(Primitives::circle2DSolid(10U, {}));
+  _circle_mesh =
+      MeshTools::compile(Primitives::circle2DSolid(num_edges_in_circle_, {}));
 
   _boxInstanceBuffer = GL::Buffer{};
   _mesh.addVertexBufferInstanced(_boxInstanceBuffer, 1, 0,
@@ -103,19 +107,6 @@ CircleDrop::CircleDrop(const Arguments &arguments)
   _circle_mesh.addVertexBufferInstanced(_circleInstanceBuffer, 1, 0,
                                         Shaders::Flat2D::TransformationMatrix{},
                                         Shaders::Flat2D::Color3{});
-
-  /* Create the ground */
-  auto ground = new Object2D{&_scene};
-  createBody(*ground, {11.0f, 0.5f}, b2_staticBody,
-             DualComplex::translation(Vector2::yAxis(-8.0f)));
-  new BoxDrawable{*ground, _boxInstanceData, 0xa5c9ea_rgbf, _drawables};
-
-  create_pyramid();
-
-  setSwapInterval(1);
-  setMinimalLoopPeriod(16);
-
-  init_imgui();
 }
 
 void CircleDrop::create_pyramid() {
@@ -124,11 +115,9 @@ void CircleDrop::create_pyramid() {
   for (std::size_t row = 0; row != pyramid_height; ++row) {
     for (std::size_t item = 0; item != pyramid_height - row; ++item) {
       auto circle = new Object2D{&_scene};
-      const DualComplex transformation =
-          global_transform_ *
-          DualComplex::translation(
-              {Float(row) * radius_ + 0.1f + Float(item) * 1.2f - 8.5f,
-               Float(row) * 1.0f - 6.0f});
+      const DualComplex transformation = DualComplex::translation(
+          {Float(row) * radius_ + 0.1f + Float(item) * 1.2f - 8.5f,
+           Float(row) * 1.0f - 6.0f});
       createBody(*circle, {radius_, radius_}, b2_dynamicBody, transformation,
                  1.f, ShapeType::Circle);
       new CircleDrawable{*circle, _circleInstanceData, 0x2f83aa_rgbf,
@@ -222,6 +211,22 @@ void CircleDrop::draw_event_box2d() {
   _shader.draw(_circle_mesh);
 }
 
+void CircleDrop::clear_all() {
+  for (b2Body *body = _world->GetBodyList(); body; body = body->GetNext()) {
+    (*reinterpret_cast<Object2D *>(body->GetUserData().pointer))
+        .features()
+        .clear();
+    _world->DestroyBody(body);
+  }
+}
+
+void CircleDrop::create_ground() {
+  auto ground = new Object2D{&_scene};
+  createBody(*ground, {11.0f, 0.5f}, b2_staticBody,
+             DualComplex::translation(Vector2::yAxis(-8.0f)));
+  new BoxDrawable{*ground, _boxInstanceData, 0xa5c9ea_rgbf, _drawables};
+}
+
 void CircleDrop::draw_event_imgui() {
   imgui_context_.newFrame();
 
@@ -235,8 +240,21 @@ void CircleDrop::draw_event_imgui() {
     create_pyramid();
   }
 
+  if (ImGui::Button("Clear all")) {
+    clear_all();
+  }
+
+  if (ImGui::Button("Create Ground")) {
+    create_ground();
+  }
+
   ImGui::SliderFloat("Circle Radius", &radius_, 0.f, 10.f);
   ImGui::SliderInt("Pyramid Height", &height_, 1, 100);
+  // Always clamp so that we don't have < 3 edges.
+  if (ImGui::SliderInt("Num Edges in Circle", &num_edges_in_circle_, 3, 100,
+                       "%d", ImGuiSliderFlags_AlwaysClamp)) {
+    init_shaders();
+  }
 
   GL::Renderer::enable(GL::Renderer::Feature::Blending);
   GL::Renderer::disable(GL::Renderer::Feature::FaceCulling);
